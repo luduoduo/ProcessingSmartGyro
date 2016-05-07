@@ -35,6 +35,7 @@ final static int SERIAL_PORT_BAUD_RATE = 57600;
 float yaw = 0.0f;
 float pitch = 0.0f;
 float roll = 0.0f;
+
 float yawOffset = 0.0f;
 float pitchOffset = 0.0f;
 float rollOffset = 0.0f;
@@ -42,6 +43,11 @@ float rollOffset = 0.0f;
 PFont font;
 Serial serial;
 
+float lock_angle;
+int lock_status;
+
+//0 means YPR, 1 means LOCK
+int sensor_mode=1;
 
 
 void drawArrow(float headWidthFactor, float headLengthFactor) {
@@ -90,8 +96,6 @@ void drawCylinder(float topRadius, float bottomRadius, float tall, int sides) {
   }
   endShape();
 
-  fill(0, 0, 255);
-
   // If it is not a cone, draw the circular top cap
   if (topRadius != 0) {
     angle = 0;
@@ -121,7 +125,7 @@ void drawCylinder(float topRadius, float bottomRadius, float tall, int sides) {
   }
 }
 
-void drawBoard() {
+void drawBoard_YPR() {
   pushMatrix();
 
   //print("yaw=");
@@ -148,6 +152,28 @@ void drawBoard() {
   drawArrow(1.0f, 2.0f);
   popMatrix();
 
+  popMatrix();
+}
+
+void drawBoard_LOCK() {
+  pushMatrix();
+  rotateY(-radians(-40));
+  rotateX(-radians(90));
+  rotateY(-radians(lock_angle)); 
+
+  // Board body
+  fill(0, 255, 0);
+  //box(300, 20, 400);
+  drawCylinder(150, 150, 50, 64);
+
+  // Forward-arrow
+  pushMatrix();
+  translate(0, 0, -150);
+  scale(0.5f, 0.2f, 0.25f);
+  fill(255, 255, 0);
+  drawArrow(1.0f, 2.0f);
+
+  popMatrix();
   popMatrix();
 }
 
@@ -188,10 +214,31 @@ void setup() {
   println("  -> Using port " + SERIAL_PORT_NUM + ": " + portName);
   serial = new Serial(this, portName, SERIAL_PORT_BAUD_RATE);
 
-  setupGyro();
+  if (sensor_mode==0)
+    setupGyro_YPRMode();
+  else
+    setupGyro_LockMode();
 }
 
-void setupGyro() {
+void setupGyro_LockMode() {
+  println("Trying to setup and synch Gyro...");
+
+  // On Mac OSX and Linux (Windows too?) the board will do a reset when we connect, which is really bad.
+  // See "Automatic (Software) Reset" on http://www.arduino.cc/en/Main/ArduinoBoardProMini
+  // So we have to wait until the bootloader is finished and the Gyro firmware can receive commands.
+  // To prevent this, disconnect/cut/unplug the DTR line going to the board. This also has the advantage,
+  // that the angles you receive are stable right from the beginning. 
+  // delay(3000);  // 3 seconds should be enough
+
+  // Set Gyro output parameters
+  serial.write("#l1");
+  serial.write("#of");  // Turn on short-style output
+  serial.write("#o0");  // Turn on continuous streaming output
+  serial.write("#oe0"); // Disable error message output
+}
+
+
+void setupGyro_YPRMode() {
   println("Trying to setup and synch Gyro...");
 
   // On Mac OSX and Linux (Windows too?) the board will do a reset when we connect, which is really bad.
@@ -207,6 +254,7 @@ void setupGyro() {
   serial.write("#o1");  // Turn on continuous streaming output
   serial.write("#oe0"); // Disable error message output
 }
+
 
 boolean synched = false;
 boolean syncRequested = false;
@@ -237,25 +285,25 @@ char readChar()
 
 float getAngle()
 {
-  char mark;
+  char signMark;
   int id[]={0, 0, 0, 0}; //e.g. id = "$+0062" mean 6.2
 
   while (serial.available() < 5) {
     delay(10);  //must delay
   }
 
-  mark=(char)serial.read();
+  signMark=(char)serial.read();
   for (int i = 0; i < 4; i++) {
     id[i]=serial.read()-'0';
   }
 
   //println((char)id[0], id[1], id[2], id[3], id[4]);
 
-  float angle = (mark == '+' ? 1.0 : -1.0) * (id[0] * 100.0 + id[1] * 10.0 + id[2] + id[3] * 0.1);
+  float angle = (signMark == '+' ? 1.0 : -1.0) * (id[0] * 100.0 + id[1] * 10.0 + id[2] + id[3] * 0.1);
   return angle;
 }
 
-void do_parse_command()
+void do_parse_command_YPR()
 {
   if (serial.available() > 0)
   {
@@ -275,8 +323,59 @@ void do_parse_command()
       println("---------------");
     }
   }
+  // Output angles
+  pushMatrix();
+  translate(10, height - 10);
+  textAlign(LEFT);
+  text("Yaw: " + ((int) yaw), 0, 0);
+  text("Pitch: " + ((int) pitch), 150, 0);
+  text("Roll: " + ((int) roll), 300, 0);
+  popMatrix();
 }
 
+
+void do_parse_command_LOCK()
+{
+  if (serial.available() > 0)
+  {
+    int val=serial.read();
+    if (val == '%')  //Lock mode output
+    {
+      char signMark=(char)serial.read();
+      int id[]={0, 0, 0, 0}; //e.g. id = "+0062" mean 6.2
+      //while (serial.available() < 4) {
+      //  delay(10);  //must delay
+      //}
+      for (int i = 0; i < 4; i++) {
+        id[i]=serial.read()-'0';
+      }
+
+      //println((char)id[0], id[1], id[2], id[3], id[4]);
+      float angle = (signMark == '+' ? 1.0 : -1.0) * (id[0] * 100.0 + id[1] * 10.0 + id[2] + id[3] * 0.1);
+
+      serial.read();  //separator
+      int status=serial.read()-'0';
+
+      lock_angle=angle;
+      lock_status=status;
+
+      print("Angle=");
+      print(lock_angle);
+      print("    Status=");
+      print(lock_status);
+      println("---------------");
+    }
+  }
+  // Output angles
+  pushMatrix();
+  translate(10, height - 10);
+  textAlign(LEFT);
+  text("Angle: " + ((float) lock_angle), 0, 0);
+  text("Status: " + ((int) lock_status), 150, 0);
+  popMatrix();
+}
+
+//Main loop
 void draw() {
   // Reset scene
   background(0);
@@ -302,19 +401,18 @@ void draw() {
     return;
   }
 
-  // Read angles from serial port
-  //while (serial.available() >= 12) { 
-  //  yaw = readFloat(serial);
-  //  pitch = readFloat(serial);
-  //  roll = readFloat(serial);
-  //}
-
-  do_parse_command();
+  if (sensor_mode==0)
+    do_parse_command_YPR();
+  else
+    do_parse_command_LOCK();
 
   // Draw board
   pushMatrix();
   translate(width/2, height/2, -400);
-  drawBoard();
+  if (sensor_mode==0)
+    drawBoard_YPR();
+  else
+    drawBoard_LOCK();
   popMatrix();
 
   textFont(font, 20);
@@ -323,38 +421,4 @@ void draw() {
 
   // Output info text
   text("Point FTDI connector towards screen and press 'a' to align", 10, 25);
-
-  // Output angles
-  pushMatrix();
-  translate(10, height - 10);
-  textAlign(LEFT);
-  text("Yaw: " + ((int) yaw), 0, 0);
-  text("Pitch: " + ((int) pitch), 150, 0);
-  text("Roll: " + ((int) roll), 300, 0);
-  popMatrix();
-}
-
-void keyPressed() {
-  switch (key) {
-  case '0':  // Turn Gyro's continuous output stream off
-    serial.write("#o0");
-    break;
-  case '1':  // Turn Gyro's continuous output stream on
-    serial.write("#o1");
-    break;
-  case 'f':  // Request one single yaw/pitch/roll frame from Gyro (use when continuous streaming is off)
-    serial.write("#f");
-    break;
-  case 'a':  // Align screen with Gyro
-    yawOffset = yaw;
-    //pitchOffset = pitch;
-    //rollOffset = roll;
-    break;
-  case 'b':  //for APM2.6
-    serial.write("#b");
-    break;
-  case 'S':  //for APM2.6
-    serial.write("#S");
-    break;
-  }
 }
