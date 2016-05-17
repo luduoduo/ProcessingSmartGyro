@@ -46,6 +46,9 @@ Serial serial;
 float lock_angle;
 int lock_status;
 
+float lock_loc=0;
+float unlock_loc=0;
+
 //0 means YPR, 1 means LOCK
 int sensor_mode=1;
 
@@ -162,7 +165,15 @@ void drawBoard_LOCK() {
   rotateY(-radians(lock_angle)); 
 
   // Board body
-  fill(0, 255, 0);
+  if (lock_status==0)
+    fill(255, 0, 0);
+  else if (lock_status==1)
+    fill(0, 255, 0);
+  else if (lock_status==2)
+    fill(0, 0, 255);
+  else
+    fill(255, 255, 255);
+
   //box(300, 20, 400);
   drawCylinder(150, 150, 50, 64);
 
@@ -170,7 +181,9 @@ void drawBoard_LOCK() {
   pushMatrix();
   translate(0, 0, -150);
   scale(0.5f, 0.2f, 0.25f);
+
   fill(255, 255, 0);
+
   drawArrow(1.0f, 2.0f);
 
   popMatrix();
@@ -420,5 +433,53 @@ void draw() {
   textAlign(LEFT);
 
   // Output info text
-  text("Point FTDI connector towards screen and press 'a' to align", 10, 25);
+  if (sensor_mode==0)
+    text("Press 'a' to align", 10, 25);
+  else
+  {
+    text("Press 'u' to set unlock(left) location: "+((float) unlock_loc), 10, 100);
+    text("Press 'l' to set lock(right) location: "+((float) lock_loc), 10, 150);
+  }
+}
+
+
+void setLockUnlockLocation(boolean lock, float location)
+{
+  serial.write('#');
+  serial.write('i');
+  serial.write(lock?'l':'u');
+  serial.write(location>0?'+':'-');
+  int loc_i=(int)abs(round(location));
+  int x;
+  x=loc_i/100;
+  serial.write(x+'0');
+  loc_i=loc_i-x*100;
+
+  x=loc_i/10;
+  serial.write(x+'0'); 
+  loc_i=loc_i-x*10;
+
+  x=loc_i;
+  serial.write(x+'0');
+}
+
+void keyPressed() {
+  switch (key) {
+  case 'a':  // Align screen with Gyro
+    yawOffset = yaw;
+    //pitchOffset = pitch;
+    //rollOffset = roll;
+    break;
+
+  case 'l':  // Set lock location
+    lock_loc  = lock_angle;
+    setLockUnlockLocation(true, lock_loc);
+    break;
+
+  case 'u':  // Set unlock location
+    unlock_loc  = lock_angle;
+    setLockUnlockLocation(false, unlock_loc);
+
+    break;
+  }
 }
